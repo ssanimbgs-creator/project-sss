@@ -55,6 +55,27 @@
     ["Breakfast in bed", "Dessert before dinner"],
   ];
 
+  const MOODS = [
+    { key: "sunny", label: "Glowing", symbol: "☀" },
+      { key: "soft", label: "Safe & steady", symbol: "♡" },
+    { key: "tender", label: "A little tender", symbol: "☾" },
+      { key: "wistful", label: "A little wistful", symbol: "✦" },
+      { key: "cloudy", label: "Need a soft landing", symbol: "☁" },
+  ];
+
+  const DATE_IDEAS = [
+    "Make a tiny playlist for each other",
+    "Cook the same recipe on video call",
+    "Take a slow sunset walk together",
+    "Pick a film and press play at the same time",
+    "Show each other your favourite childhood photo",
+    "Order each other a little surprise treat",
+    "Plan a dream weekend away",
+    "Have coffee together before the day begins",
+    "Draw portraits of each other in two minutes",
+    "Build a blanket fort and tell stories",
+  ];
+
   let savedClientId = localStorage.getItem(CLIENT_ID_KEY);
   if (!savedClientId || !/^[a-zA-Z0-9-]{12,80}$/.test(savedClientId)) {
     savedClientId = crypto.randomUUID();
@@ -105,6 +126,7 @@
     game: "Little games",
     drawing: "Doodle sky",
     stars: "Our constellation",
+    rituals: "Our little rituals",
   };
 
   const loginForm = $("#join-form");
@@ -502,6 +524,7 @@
       chat: renderChat,
       letters: renderLetters,
       memories: renderMemories,
+      rituals: renderRituals,
       music: renderMusic,
       questions: renderQuestions,
       game: renderGame,
@@ -529,11 +552,11 @@
         <div><div class="section-kicker">A SOFTER KIND OF DISTANCE</div><h1>Hello, <em>${escapeHtml(state.name)}</em></h1><p>Your favourite person has a little place here too.</p></div>
         <div class="date-chip">${now.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" })}</div>
       </div>
-      <section class="hero-card">
-        <div class="hero-copy"><div class="section-kicker">A LITTLE HELLO, ANY TIME</div><h2>Good things feel even sweeter shared.</h2><p>Leave a note, send a tiny thought, or make something together. This little corner is yours.</p>
-          <div class="hero-actions"><button class="button button-primary" type="button" data-view="chat">Say a little hello <span aria-hidden="true">↗</span></button><button class="button button-ghost" type="button" data-view="questions">Pick a question <span aria-hidden="true">✳</span></button></div>
+      <section class="hero-card hero-cosmos">
+        <div class="hero-copy"><div class="section-kicker">A LITTLE ORBIT, JUST FOR TWO</div><h2>Your own little universe.</h2><p>Two hearts, one shared sky. Let the small moments find their way back to each other.</p>
+          <div class="hero-actions"><button class="button button-primary" type="button" data-view="chat">Say a little hello <span aria-hidden="true">↗</span></button><button class="button button-ghost" type="button" data-view="rituals">Make a little plan <span aria-hidden="true">✦</span></button></div>
         </div>
-        <div class="hero-planet" aria-hidden="true"><span class="planet-spark spark-a">✦</span><span class="planet-spark spark-b">✧</span><span class="planet-ring"></span><span class="planet-core">♡</span></div>
+        <div class="hero-visual" data-3d-scene aria-hidden="true"><div class="scene-aura"></div><div class="scene-orbit scene-orbit-wide"></div><div class="scene-orbit scene-orbit-inner"></div><div class="scene-orbit scene-orbit-cross"></div><span class="scene-star scene-star-one">✦</span><span class="scene-star scene-star-two">✧</span><span class="scene-star scene-star-three">·</span><div class="scene-world"><span>♡</span><i></i></div><span class="scene-moon scene-moon-one"></span><span class="scene-moon scene-moon-two"></span></div>
       </section>
       <div class="home-grid">
         <section class="card home-chat"><div class="card-heading"><div><h3>A little chat</h3><p>Little thoughts, sent across the day.</p></div><button class="subtle-link" type="button" data-view="chat">Open chat ↗</button></div>
@@ -552,6 +575,7 @@
         <button class="quick-card" type="button" data-view="music"><span class="quick-icon">♫</span><span class="quick-copy"><strong>Press play together</strong><span>Make a little soundtrack</span></span></button>
         <button class="quick-card" type="button" data-view="drawing"><span class="quick-icon">✎</span><span class="quick-copy"><strong>Doodle something</strong><span>A sky you can both share</span></span></button>
         <button class="quick-card" type="button" data-view="memories"><span class="quick-icon">▧</span><span class="quick-copy"><strong>Keep a memory</strong><span>A photo or little story</span></span></button>
+        <button class="quick-card ritual-quick" type="button" data-view="rituals"><span class="quick-icon">✺</span><span class="quick-copy"><strong>Check in & make a plan</strong><span>A little care, a little adventure</span></span></button>
       </div>`;
   }
 
@@ -629,6 +653,50 @@
 
     if (state.pendingMemoryPhoto) showMemoryPhotoPreview();
     if (visibleMemories.some((event) => event.payload.hasPhoto === true)) hydrateMemoryThumbnails(visibleMemories);
+  }
+
+  function renderRituals() {
+    const latestCheckinByPerson = new Map();
+    for (const event of eventsOf("heart-checkin")) {
+      const previous = latestCheckinByPerson.get(event.from);
+      if (!previous || event.createdAt > previous.createdAt) latestCheckinByPerson.set(event.from, event);
+    }
+    const checkins = [...latestCheckinByPerson.values()]
+      .sort((left, right) => left.from === state.clientId ? -1 : right.from === state.clientId ? 1 : right.createdAt - left.createdAt)
+      .slice(0, 2);
+    const ownCheckin = latestCheckinByPerson.get(state.clientId);
+    const selectedMood = MOODS.some((mood) => mood.key === ownCheckin?.payload.mood) ? ownCheckin.payload.mood : "";
+    const completedPlanIds = new Set(eventsOf("date-plan-complete").map((event) => event.payload.planId));
+    const plans = eventsOf("date-plan");
+    const sortByDate = (left, right) => String(left.payload.date || "").localeCompare(String(right.payload.date || "")) || left.createdAt - right.createdAt;
+    const upcomingPlans = plans.filter((event) => !completedPlanIds.has(event.payload.id)).sort(sortByDate).slice(0, 8);
+    const finishedPlans = plans.filter((event) => completedPlanIds.has(event.payload.id)).sort((left, right) => right.createdAt - left.createdAt).slice(0, 3);
+    const today = new Date();
+    const localDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+
+    viewRoot.innerHTML = `<div class="page-heading rituals-heading"><div><div class="section-kicker">A LITTLE CARE, A LITTLE ADVENTURE</div><h1>Our little rituals</h1><p>Make a little room for how you're feeling, and for something lovely to look forward to.</p></div><span class="ritual-heading-orb" aria-hidden="true">✺</span></div>
+      <div class="ritual-layout"><section class="card ritual-card mood-card"><div class="ritual-card-top"><div><span class="ritual-index">01 / CHECK IN</span><h2>How is your heart?</h2><p>A small honest answer can bring you closer, even from far away.</p></div><span class="ritual-card-icon pulse-heart" aria-hidden="true">♡</span></div>
+        <form data-form="heart-checkin"><fieldset class="mood-fieldset"><legend>Pick the feeling that fits today</legend><div class="mood-choices">${MOODS.map((mood) => `<label class="mood-choice ${selectedMood === mood.key ? "selected" : ""}"><input type="radio" name="mood" value="${mood.key}" ${selectedMood === mood.key ? "checked" : ""} required><span class="mood-symbol" aria-hidden="true">${mood.symbol}</span><span>${mood.label}</span></label>`).join("")}</div></fieldset>
+          <label class="ritual-field-label" for="heart-note">What would feel good today? <span>optional</span></label><textarea id="heart-note" name="note" maxlength="240" placeholder="A little reassurance, a laugh, or just hearing your voice…">${escapeHtml(ownCheckin?.payload.note || "")}</textarea><div class="ritual-form-foot"><span>🔒 Encrypted in your shared room</span><button class="button button-primary" type="submit">Share my heart <span>♡</span></button></div>
+        </form><div class="checkin-divider"><span>Your latest little check-ins</span><i></i></div><div class="checkin-list">${checkins.length ? checkins.map((event) => {
+        const mood = MOODS.find((item) => item.key === event.payload.mood) || MOODS[1];
+          const subject = event.from === state.clientId ? "You are" : `${escapeHtml(event.name)} is`;
+          const feeling = mood.key === "cloudy" ? "in need of a soft landing" : mood.label.toLowerCase();
+          return `<article class="checkin-person"><span class="checkin-mood-symbol">${mood.symbol}</span><div><strong>${subject} ${feeling}</strong>${event.payload.note ? `<p>“${escapeHtml(event.payload.note)}”</p>` : `<p>A little signal from the heart.</p>`}</div><time>${relativeDate(event.createdAt)}</time></article>`;
+        }).join("") : `<div class="checkin-empty">The first little check-in is yours to leave. ♡</div>`}</div>
+      </section><section class="card ritual-card date-planner"><div class="ritual-card-top"><div><span class="ritual-index">02 / LOOK FORWARD</span><h2>Our next little date</h2><p>Collect the small plans that make the distance feel shorter.</p></div><span class="ritual-card-icon plan-icon" aria-hidden="true">✧</span></div>
+        <form class="date-plan-form" data-form="date-plan"><label class="ritual-field-label" for="date-plan-idea">What shall we do together?</label><div class="idea-input-wrap"><input id="date-plan-idea" class="date-plan-input" name="idea" maxlength="120" placeholder="A moonlit walk, a shared playlist…" required><button class="idea-spark-button" type="button" data-action="surprise-date-idea" aria-label="Suggest a sweet date idea" title="Surprise us">✦</button></div><label class="ritual-field-label" for="date-plan-date">When should we save a little time?</label><input id="date-plan-date" class="date-plan-date" type="date" name="date" value="${localDate}" required><button class="button button-primary plan-save-button" type="submit">Add to our plans <span>↗</span></button></form>
+        <div class="plan-divider"><span>Little things to look forward to</span><i></i></div><div class="date-plan-list">${upcomingPlans.length ? `<span class="plan-section-label">ON THE HORIZON</span>${upcomingPlans.map((event) => renderDatePlan(event, false)).join("")}` : `<div class="plan-empty"><span>✦</span><strong>Nothing on the calendar yet.</strong><p>Save a small date idea and give future-you something sweet to anticipate.</p></div>`}${finishedPlans.length ? `<span class="plan-section-label completed-label">ALREADY LIVED ♡</span>${finishedPlans.map((event) => renderDatePlan(event, true)).join("")}` : ""}</div>
+      </section></div>`;
+  }
+
+  function renderDatePlan(event, complete) {
+    const dateValue = /^\d{4}-\d{2}-\d{2}$/.test(String(event.payload.date || "")) ? event.payload.date : new Date(event.createdAt).toISOString().slice(0, 10);
+    const [year, month, day] = dateValue.split("-").map(Number);
+    const date = new Date(year, month - 1, day);
+    const dateLabel = date.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+    const planId = String(event.payload.id || event.id);
+    return `<article class="date-plan-item ${complete ? "is-complete" : ""}"><div class="plan-date-badge"><span>${date.toLocaleDateString([], { weekday: "short" })}</span><strong>${date.toLocaleDateString([], { month: "short", day: "numeric" })}</strong></div><div class="plan-item-copy"><h3>${escapeHtml(event.payload.idea)}</h3><p>${dateLabel} · saved by ${escapeHtml(event.name)}</p></div>${complete ? `<span class="plan-done-mark" aria-label="Date completed">♡</span>` : `<button class="plan-done-button" type="button" data-action="complete-date-plan" data-plan-id="${escapeHtml(planId)}">We did it <span>✦</span></button>`}</article>`;
   }
 
   async function hydrateMemoryThumbnails(memories) {
@@ -1055,6 +1123,26 @@
         renderMemories();
         showToast("Your memory is tucked away for both of you. ♡");
       }
+    } else if (kind === "heart-checkin") {
+      const mood = String(data.get("mood") || "");
+      const note = String(data.get("note") || "").trim().slice(0, 240);
+      if (!MOODS.some((option) => option.key === mood)) { showToast("Choose the feeling that fits today."); return; }
+      if (await postEvent({ type: "heart-checkin", mood, note })) {
+        form.reset();
+        renderRituals();
+        showToast("Your little check-in is on its way. ♡");
+      }
+    } else if (kind === "date-plan") {
+      const idea = String(data.get("idea") || "").trim().slice(0, 120);
+      const date = String(data.get("date") || "");
+      if (!idea) { showToast("Add a small thing you'd love to do together."); return; }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { showToast("Choose a date for your little plan."); return; }
+      const planId = crypto.randomUUID();
+      if (await postEvent({ type: "date-plan", id: planId, idea, date })) {
+        form.reset();
+        renderRituals();
+        showToast("A little something to look forward to is saved. ✦");
+      }
     } else if (kind === "track") {
       const track = parseTrack(String(data.get("track") || ""));
       if (!track) { showToast("Please use a YouTube video or Spotify track, album, or playlist link."); return; }
@@ -1075,6 +1163,11 @@
   }
 
   viewRoot.addEventListener("change", async (event) => {
+    const moodInput = event.target.closest("input[name='mood']");
+    if (moodInput) {
+      $$(".mood-choice", viewRoot).forEach((choice) => choice.classList.toggle("selected", $("input", choice)?.checked === true));
+      return;
+    }
     const yearFilter = event.target.closest("[data-action='memory-year-filter']");
     if (yearFilter) {
       state.memoryYear = yearFilter.value;
@@ -1140,6 +1233,17 @@
       const input = $("#memory-photo");
       if (input) input.value = "";
       renderMemories();
+    } else if (action === "surprise-date-idea") {
+      const field = $("#date-plan-idea");
+      if (field) {
+        const current = field.value;
+        const choices = DATE_IDEAS.filter((idea) => idea !== current);
+        field.value = choices[Math.floor(Math.random() * choices.length)] || DATE_IDEAS[0];
+        field.focus();
+      }
+    } else if (action === "complete-date-plan") {
+      const planId = actionButton.dataset.planId;
+      if (planId) postEvent({ type: "date-plan-complete", planId });
     } else if (action === "new-question") {
       const previous = currentPrompt().text;
       const candidates = QUESTIONS.filter((question) => question !== previous);
@@ -1408,5 +1512,20 @@
     if (toastMessage) showToast(toastMessage);
   }
 
+  viewRoot.addEventListener("pointermove", (event) => {
+    const scene = event.target.closest("[data-3d-scene]");
+    if (!scene || event.pointerType === "touch" || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const bounds = scene.getBoundingClientRect();
+    const x = (event.clientX - bounds.left) / bounds.width - 0.5;
+    const y = (event.clientY - bounds.top) / bounds.height - 0.5;
+    scene.style.setProperty("--scene-tilt-x", `${(-y * 12).toFixed(2)}deg`);
+    scene.style.setProperty("--scene-tilt-y", `${(x * 15).toFixed(2)}deg`);
+  });
+  viewRoot.addEventListener("pointerout", (event) => {
+    const scene = event.target.closest("[data-3d-scene]");
+    if (!scene || scene.contains(event.relatedTarget)) return;
+    scene.style.setProperty("--scene-tilt-x", "0deg");
+    scene.style.setProperty("--scene-tilt-y", "0deg");
+  });
   window.addEventListener("resize", () => { if (state.activeView === "drawing") paintDrawing(); });
 })();

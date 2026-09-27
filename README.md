@@ -1,6 +1,6 @@
 # LoveNest
 
-A small, private room for two. The app includes presence, encrypted chat and letters, a private photo album and shared memories timeline, synced YouTube listening, a shared drawing canvas, a constellation, a question jar, a two-player game, and voice calls.
+A small, private room for two. The app includes presence, encrypted chat and letters, a private photo album and shared memories timeline, heart check-ins, a shared date planner, synced YouTube listening, a shared drawing canvas, a constellation, a question jar, a two-player game, and voice calls. The home screen and login use a layered, animated night-sky theme with a pointer-reactive 3D heart world; motion follows the device's reduced-motion preference.
 
 ## Run it
 
@@ -16,7 +16,7 @@ Names are remembered in that browser. The room history is kept in `data/rooms.js
 
 ## Privacy
 
-The shared phrase derives an AES-GCM key and room identifier in each browser. The server only receives the room identifier, participant names, call signaling, and encrypted room events. It cannot read the text, responses, photos, music links, or drawings. Choose a phrase that is hard to guess (several unrelated words work well); anyone who knows it can join the room. Data is stored by the server process without a backup. Voice audio uses WebRTC's encrypted browser-to-browser connection; call setup signaling passes through the room server.
+The shared phrase derives an AES-GCM key and room identifier in each browser. The server only receives the room identifier, participant names, call signaling, and encrypted room events. It cannot read the text, responses, photos, music links, drawings, mood check-ins, or date plans. Choose a phrase that is hard to guess (several unrelated words work well); anyone who knows it can join the room. Data is stored by the server process without a backup. Voice audio uses WebRTC's encrypted browser-to-browser connection; call setup signaling passes through the room server.
 
 ## Deploying
 
