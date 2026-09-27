@@ -1,6 +1,6 @@
 # LoveNest
 
-A small, private room for two. The app includes presence, encrypted chat and letters, a private photo album and shared memories timeline, heart check-ins, a shared date planner, synced YouTube listening, a shared drawing canvas, a constellation, a question jar, a two-player game, and voice calls. The home screen and login use a layered, animated night-sky theme with a pointer-reactive 3D heart world; motion follows the device's reduced-motion preference.
+A small, private room for two. The app includes presence, encrypted chat and voice notes, letters, a private photo album and shared memories timeline, heart check-ins, a shared date planner, synced YouTube listening, a shared drawing canvas, a constellation, a question jar, a two-player game, voice calls, and shared love-heart effects. Its romantic midnight theme has drifting hearts and a pointer-reactive 3D heart world; motion follows the device's reduced-motion preference.
 
 ## Run it
 
@@ -10,13 +10,13 @@ A small, private room for two. The app includes presence, encrypted chat and let
 4. Open <http://localhost:3000> in a browser.
 5. Both people enter the same secret phrase and their own name.
 
-Names are remembered in that browser. The room history is kept in `data/rooms.json`, and encrypted photo attachments are stored separately in `data/attachments.json`. Photos are resized in your browser before they are encrypted and saved. Clearing both files removes saved room history and photos. Room identifiers, participant names, timestamps, and call setup signaling are visible to the server.
+Names are remembered in that browser. The room history is kept in `data/rooms.json`, and encrypted photo and voice-note attachments are stored separately in `data/attachments.json`. Photos are resized in your browser before they are encrypted and saved. Clearing both files removes saved room history, photos, and voice notes. Room identifiers, participant names, timestamps, and call setup signaling are visible to the server.
 
 `http://localhost:3000` is suitable for trying the app in browsers on the computer running it. For another device, LoveNest needs an HTTPS address with a certificate trusted by that device. Set `TLS_KEY_PATH` and `TLS_CERT_PATH` before `npm start` to serve a local certificate, or deploy the app behind an HTTPS reverse proxy. Browsers require HTTPS (or `localhost`) for private browser storage and microphone access.
 
 ## Privacy
 
-The shared phrase derives an AES-GCM key and room identifier in each browser. The server only receives the room identifier, participant names, call signaling, and encrypted room events. It cannot read the text, responses, photos, music links, drawings, mood check-ins, or date plans. Choose a phrase that is hard to guess (several unrelated words work well); anyone who knows it can join the room. Data is stored by the server process without a backup. Voice audio uses WebRTC's encrypted browser-to-browser connection; call setup signaling passes through the room server.
+The shared phrase derives an AES-GCM key and room identifier in each browser. The server only receives the room identifier, participant names, call signaling, and encrypted room events and attachments. It cannot read the text, responses, photos, voice notes, music links, drawings, mood check-ins, or date plans. Voice notes are limited to 20 seconds and encrypted before they leave your device. Choose a phrase that is hard to guess (several unrelated words work well); anyone who knows it can join the room. Data is stored by the server process without a backup. Voice calls use WebRTC's encrypted browser-to-browser connection; call setup signaling passes through the room server.
 
 ## Deploying
 

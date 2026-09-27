@@ -6,6 +6,8 @@
   const LOGIN_NAME_KEY = "lovenest:name";
   const CLIENT_ID_KEY = "lovenest:client-id";
   const CHAT_SEEN_PREFIX = "lovenest:chat-seen:";
+  const VOICE_NOTE_MAX_MS = 20_000;
+  const VOICE_NOTE_MAX_BYTES = 220_000;
 
   const QUESTIONS = [
     "What tiny thing I do always makes you smile?",
@@ -112,6 +114,12 @@
     memoryPhotoData: new Map(),
     memoryPhotoLoads: new Map(),
     activePhotoId: null,
+    voiceRecording: null,
+    voiceNoteRequesting: false,
+    voiceNoteSending: false,
+    voiceNoteUrls: new Map(),
+    voiceNoteLoads: new Map(),
+    lastLoveSparkAt: 0,
     loadingHistory: false,
     historyQueue: Promise.resolve(),
   };
@@ -143,6 +151,21 @@
   const photoLightbox = $("#photo-lightbox");
   const lightboxImage = $("#lightbox-image");
   const lightboxCaption = $("#lightbox-caption");
+  const loveEffectsLayer = $("#love-bursts");
+  const loveParticleLayer = $("#love-particles");
+
+  if (loveParticleLayer) {
+    for (let index = 0; index < 15; index += 1) {
+      const particle = document.createElement("span");
+      particle.className = "love-particle";
+      particle.textContent = index % 4 === 0 ? "♥" : "♡";
+      particle.style.setProperty("--particle-x", `${(index * 37 + 9) % 100}%`);
+      particle.style.setProperty("--particle-delay", `${-(index % 8) * 2.6}s`);
+      particle.style.setProperty("--particle-duration", `${15 + (index % 6) * 2}s`);
+      particle.style.setProperty("--particle-size", `${12 + (index % 4) * 5}px`);
+      loveParticleLayer.append(particle);
+    }
+  }
 
   nameInput.value = localStorage.getItem(LOGIN_NAME_KEY) || "";
 
@@ -215,6 +238,7 @@
     state.cryptoKey = cryptoKey;
     state.events = [];
     state.knownEventIds.clear();
+    clearVoiceNoteCache();
     state.roster = [];
     state.memoryPhotoJobId += 1;
     state.memoryPhotoProcessing = false;
@@ -381,6 +405,169 @@
     finally { state.memoryPhotoLoads.delete(event.id); }
   }
 
+  function clearVoiceNoteCache() {
+    for (const url of state.voiceNoteUrls.values()) URL.revokeObjectURL(url);
+    state.voiceNoteUrls.clear();
+    state.voiceNoteLoads.clear();
+  }
+
+  async function loadVoiceNote(event) {
+    if (state.voiceNoteUrls.has(event.id)) return state.voiceNoteUrls.get(event.id);
+    if (state.voiceNoteLoads.has(event.id)) return state.voiceNoteLoads.get(event.id);
+    if (!state.socket?.connected || event.payload.hasVoiceNote !== true) {
+      throw new Error("This voice note is not available right now.");
+    }
+
+    const socket = state.socket;
+    const cryptoKey = state.cryptoKey;
+    const load = new Promise((resolve, reject) => {
+      socket.timeout(15_000).emit("get-room-attachment", { eventId: event.id }, async (error, response) => {
+        try {
+          if (error) throw new Error("This voice note could not be loaded. Check your connection and try again.");
+          if (state.socket !== socket) throw new Error("This voice note is no longer available in this room.");
+          if (!response?.ok || typeof response.packet !== "string") throw new Error("This voice note could not be loaded.");
+          const payload = await decryptPayload(response.packet, cryptoKey);
+          if (state.socket !== socket || state.cryptoKey !== cryptoKey) throw new Error("This voice note is no longer available in this room.");
+          if (payload?.type !== "voice-note" || typeof payload.data !== "string" || payload.data.length > Math.ceil(VOICE_NOTE_MAX_BYTES * 4 / 3) + 8) {
+            throw new Error("This voice note could not be opened.");
+          }
+          const mimeType = String(payload.mimeType || "").split(";")[0].toLowerCase();
+          if (!new Set(["audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg"]).has(mimeType) || !/^[a-zA-Z0-9+/]*={0,2}$/.test(payload.data)) {
+            throw new Error("This voice note uses an audio format your browser cannot open.");
+          }
+          const bytes = base64ToBytes(payload.data);
+          if (!bytes.length || bytes.length > VOICE_NOTE_MAX_BYTES) throw new Error("This voice note is too large to open.");
+          const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }));
+          state.voiceNoteUrls.set(event.id, url);
+          resolve(url);
+        } catch (loadError) {
+          reject(loadError);
+        }
+      });
+    });
+    state.voiceNoteLoads.set(event.id, load);
+    try { return await load; }
+    finally { state.voiceNoteLoads.delete(event.id); }
+  }
+
+  function formatVoiceDuration(milliseconds) {
+    const seconds = Math.max(1, Math.min(VOICE_NOTE_MAX_MS / 1000, Math.round(Number(milliseconds || 0) / 1000)));
+    return `00:${String(seconds).padStart(2, "0")}`;
+  }
+
+  function formatRecordingTime(milliseconds) {
+    const seconds = Math.max(0, Math.floor(milliseconds / 1000));
+    return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+  }
+
+  function updateVoiceRecorderUI() {
+    const recording = state.voiceRecording;
+    const button = $(".voice-note-button", viewRoot);
+    if (button) {
+      button.disabled = state.voiceNoteRequesting || state.voiceNoteSending;
+      button.classList.toggle("is-recording", Boolean(recording));
+      button.setAttribute("aria-pressed", String(Boolean(recording)));
+      button.setAttribute("aria-label", recording ? "Stop and send voice note" : "Record a voice note");
+      const copy = $(".voice-note-button-copy", button);
+      if (copy) copy.textContent = recording ? `Recording ${formatRecordingTime(Date.now() - recording.startedAt)} · tap to send` : "Record voice note";
+    }
+    const dock = $("#voice-recorder-dock");
+    if (!dock) return;
+    dock.hidden = !recording;
+    const timer = $("#voice-recorder-timer");
+    if (timer && recording) {
+      const elapsed = Math.min(VOICE_NOTE_MAX_MS, Date.now() - recording.startedAt);
+      timer.textContent = `${formatRecordingTime(elapsed)} / 00:20`;
+    }
+  }
+
+  async function startVoiceNoteRecording() {
+    if (state.voiceNoteRequesting || state.voiceNoteSending) return;
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      showToast("Voice notes need a secure browser connection and microphone access.");
+      return;
+    }
+    state.voiceNoteRequesting = true;
+    updateVoiceRecorderUI();
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        video: false,
+      });
+      if (state.activeView !== "chat" || !state.socket?.connected) {
+        for (const track of stream.getTracks()) track.stop();
+        return;
+      }
+      const mimeType = ["audio/webm;codecs=opus", "audio/mp4", "audio/ogg;codecs=opus", "audio/webm"]
+        .find((type) => MediaRecorder.isTypeSupported(type));
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      const recording = { recorder, stream, chunks: [], bytes: 0, startedAt: Date.now(), interval: null, timeout: null, discard: false };
+      recorder.addEventListener("dataavailable", (event) => {
+        if (!event.data?.size || recording.discard) return;
+        recording.bytes += event.data.size;
+        recording.chunks.push(event.data);
+        if (recording.bytes > VOICE_NOTE_MAX_BYTES) {
+          showToast("That voice note reached its size limit, so it was discarded. Try a shorter one.");
+          stopVoiceNoteRecording(true);
+        }
+      });
+      recorder.addEventListener("stop", () => {
+        for (const track of stream.getTracks()) track.stop();
+        if (!recording.discard) void sendRecordedVoiceNote(recording);
+      }, { once: true });
+      recorder.start(250);
+      state.voiceRecording = recording;
+      recording.interval = window.setInterval(updateVoiceRecorderUI, 250);
+      recording.timeout = window.setTimeout(() => stopVoiceNoteRecording(false), VOICE_NOTE_MAX_MS);
+      showToast("Say anything sweet. Your voice note stops after 20 seconds. ♡");
+    } catch (error) {
+      for (const track of stream?.getTracks() || []) track.stop();
+      showToast(error?.name === "NotAllowedError" ? "Allow microphone access to record a little hello." : "The microphone could not start. Please try again.");
+    } finally {
+      state.voiceNoteRequesting = false;
+      updateVoiceRecorderUI();
+    }
+  }
+
+  function stopVoiceNoteRecording(discard = false) {
+    const recording = state.voiceRecording;
+    if (!recording) return;
+    recording.discard = discard;
+    window.clearInterval(recording.interval);
+    window.clearTimeout(recording.timeout);
+    state.voiceRecording = null;
+    updateVoiceRecorderUI();
+    if (recording.recorder.state !== "inactive") recording.recorder.stop();
+  }
+
+  async function sendRecordedVoiceNote(recording) {
+    const blob = new Blob(recording.chunks, { type: recording.recorder.mimeType || recording.chunks[0]?.type || "audio/webm" });
+    if (!blob.size) { showToast("No sound came through. Try recording once more."); return; }
+    if (blob.size > VOICE_NOTE_MAX_BYTES) { showToast("That voice note was too large to share. Try a shorter one."); return; }
+    const mimeType = (blob.type || "audio/webm").split(";")[0].toLowerCase();
+    if (!new Set(["audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg"]).has(mimeType)) {
+      showToast("This browser recorded an audio format LoveNest cannot share yet.");
+      return;
+    }
+    state.voiceNoteSending = true;
+    updateVoiceRecorderUI();
+    try {
+      const data = bytesToBase64(new Uint8Array(await blob.arrayBuffer()));
+      const durationMs = Math.min(VOICE_NOTE_MAX_MS, Date.now() - recording.startedAt);
+      const sent = await postEvent(
+        { type: "voice-note", hasVoiceNote: true, durationMs, mimeType },
+        { type: "voice-note", mimeType, data }
+      );
+      if (sent) showToast("Your little voice note is tucked safely into the chat. ♡");
+    } catch {
+      showToast("This voice note could not be prepared. Please try again.");
+    } finally {
+      state.voiceNoteSending = false;
+      updateVoiceRecorderUI();
+    }
+  }
+
   async function receiveEvent(event) {
     if (!event?.id || state.knownEventIds.has(event.id)) return;
     state.knownEventIds.add(event.id);
@@ -391,13 +578,18 @@
     }
     state.events.push({ ...event, payload });
     state.events.sort((left, right) => left.createdAt - right.createdAt);
+    if (payload.type === "love-spark" && event.from !== state.clientId && Date.now() - event.createdAt < 12_000) {
+      spawnLoveBurst(window.innerWidth / 2, window.innerHeight * 0.48);
+      showToast(`${event.name} sent a little love your way. ♡`);
+    }
     if (payload.type === "music-state" && event.from !== state.clientId) syncMusic({ ...payload, sentAt: event.createdAt });
-    if (state.activeView === "chat" && payload.type === "chat") markChatsSeen();
+    if (state.activeView === "chat" && ["chat", "voice-note"].includes(payload.type)) markChatsSeen();
     if (!state.loadingHistory) {
-      if (state.activeView === "drawing" && (payload.type === "draw" || payload.type === "draw-clear")) {
+      if (payload.type === "love-spark") {
+        // The floating heart effect is the whole event; avoid redrawing the current view.
+      } else if (state.activeView === "drawing" && (payload.type === "draw" || payload.type === "draw-clear")) {
         window.requestAnimationFrame(paintDrawing);
-      }
-      if (state.activeView === "music" && payload.type === "track") renderMusic();
+      } else if (state.activeView === "music" && payload.type === "track") renderMusic();
       else if (state.activeView === "music" && payload.type === "music-state") updateMusicStatus();
       else renderCurrentView();
     }
@@ -424,6 +616,10 @@
 
   function eventsOf(type) {
     return state.events.filter((event) => event.payload.type === type);
+  }
+
+  function chatEvents() {
+    return state.events.filter((event) => ["chat", "voice-note"].includes(event.payload.type));
   }
 
   function latestOf(type) {
@@ -479,7 +675,7 @@
 
   function updateChatUnread() {
     const seen = Number.parseInt(localStorage.getItem(CHAT_SEEN_PREFIX + state.roomId) || "0", 10);
-    state.unreadChatCount = state.events.filter((event) => event.payload.type === "chat" && event.from !== state.clientId && event.createdAt > seen).length;
+    state.unreadChatCount = state.events.filter((event) => ["chat", "voice-note"].includes(event.payload.type) && event.from !== state.clientId && event.createdAt > seen).length;
     const badge = $("#chat-count");
     if (badge) {
       badge.textContent = state.unreadChatCount > 9 ? "9+" : String(state.unreadChatCount);
@@ -488,7 +684,7 @@
   }
 
   function markChatsSeen() {
-    const latest = [...state.events].reverse().find((event) => event.payload.type === "chat");
+    const latest = [...state.events].reverse().find((event) => ["chat", "voice-note"].includes(event.payload.type));
     if (latest) localStorage.setItem(CHAT_SEEN_PREFIX + state.roomId, String(latest.createdAt));
     state.unreadChatCount = 0;
     updateChatUnread();
@@ -545,7 +741,7 @@
     const now = new Date();
     const letter = [...eventsOf("letter")].reverse()[0];
     const partner = partnerMembers()[0];
-    const chatEvents = eventsOf("chat").slice(-5);
+    const chatPreview = chatEvents().slice(-5);
     const preview = letter?.payload.text ? escapeHtml(letter.payload.text.slice(0, 128)) + (letter.payload.text.length > 128 ? "…" : "") : "One day, a little note will be waiting here.";
     viewRoot.innerHTML = `
       <div class="home-greeting">
@@ -560,7 +756,7 @@
       </section>
       <div class="home-grid">
         <section class="card home-chat"><div class="card-heading"><div><h3>A little chat</h3><p>Little thoughts, sent across the day.</p></div><button class="subtle-link" type="button" data-view="chat">Open chat ↗</button></div>
-          <div id="home-messages" class="message-list">${renderChatRows(chatEvents, true)}</div>
+          <div id="home-messages" class="message-list">${renderChatRows(chatPreview, true)}</div>
           <form class="message-form" data-form="chat"><input name="message" maxlength="1200" autocomplete="off" placeholder="Send a little hello…" aria-label="Write a chat message" required><button class="send-button" type="submit" aria-label="Send message">↗</button></form>
         </section>
         <div class="home-side">
@@ -585,18 +781,26 @@
       const mine = event.from === state.clientId;
       const who = mine ? "You" : event.name;
       const avatar = initials(mine ? state.name : event.name);
-      return `<article class="chat-row ${mine ? "mine" : ""}"><span class="chat-avatar">${escapeHtml(avatar)}</span><div class="chat-content"><div class="chat-meta">${escapeHtml(who)} · ${timeLabel(event.createdAt)}</div><div class="chat-bubble">${escapeHtml(event.payload.text)}</div></div></article>`;
+      const isVoiceNote = event.payload.type === "voice-note" && event.payload.hasVoiceNote === true;
+      const voiceUrl = isVoiceNote ? state.voiceNoteUrls.get(event.id) : null;
+      const body = isVoiceNote
+        ? (voiceUrl
+          ? `<div class="voice-note-player-wrap"><audio class="voice-note-player" src="${escapeHtml(voiceUrl)}" controls preload="none" aria-label="Voice note from ${escapeHtml(event.name)}"></audio><span>♡ ${formatVoiceDuration(event.payload.durationMs)}</span></div>`
+          : `<button class="voice-note-load" type="button" data-action="load-voice-note" data-event-id="${escapeHtml(event.id)}"><span aria-hidden="true">▶</span><span>Listen to a voice note <small>${formatVoiceDuration(event.payload.durationMs)} · tap to load</small></span></button>`)
+        : `<div class="chat-bubble">${escapeHtml(event.payload.text)}</div>`;
+      return `<article class="chat-row ${mine ? "mine" : ""} ${isVoiceNote ? "voice-note-row" : ""}"><span class="chat-avatar">${escapeHtml(avatar)}</span><div class="chat-content"><div class="chat-meta">${escapeHtml(who)} · ${timeLabel(event.createdAt)}</div>${body}</div></article>`;
     }).join("");
   }
 
   function renderChat() {
-    const messages = eventsOf("chat");
+    const messages = chatEvents();
     viewRoot.innerHTML = `<section class="chat-page">
       <div class="page-heading"><div><div class="section-kicker">A LITTLE BACK AND FORTH</div><h1>Little chats</h1><p>Ordinary thoughts have a way of making the day feel closer.</p></div><span class="pill">${partnerMembers().length ? `♡ ${escapeHtml(partnerName())} is here` : "♡ Just for the two of you"}</span></div>
-      <div class="card full-chat-card"><div class="message-list">${renderChatRows(messages.slice(-120))}</div><form class="message-form" data-form="chat"><input name="message" maxlength="1200" autocomplete="off" placeholder="Write something sweet…" aria-label="Write a chat message" required><button class="send-button" type="submit" aria-label="Send message">↗</button></form><p class="chat-encryption-note">✦ Your messages are private to this room.</p></div>
+      <div class="card full-chat-card"><div class="message-list">${renderChatRows(messages.slice(-120))}</div><form class="message-form chat-message-form" data-form="chat"><input name="message" maxlength="1200" autocomplete="off" placeholder="Write something sweet…" aria-label="Write a chat message" required><button class="voice-note-button" type="button" data-action="toggle-voice-note" aria-pressed="${Boolean(state.voiceRecording)}" aria-label="${state.voiceRecording ? "Stop and send voice note" : "Record a voice note"}"><span class="voice-note-mic" aria-hidden="true">♫</span><span class="voice-note-button-copy">${state.voiceRecording ? `Recording ${formatRecordingTime(Date.now() - state.voiceRecording.startedAt)} · tap to send` : "Record voice note"}</span></button><button class="send-button" type="submit" aria-label="Send message">↗</button></form><p class="chat-encryption-note">✦ Messages and voice notes are encrypted in your browser before sharing. Voice notes are up to 20 seconds.</p></div>
     </section>`;
     const list = $(".full-chat-card .message-list");
     if (list) list.scrollTop = list.scrollHeight;
+    updateVoiceRecorderUI();
   }
 
   function renderLetters() {
@@ -1219,7 +1423,29 @@
     const actionButton = event.target.closest("[data-action]");
     if (!actionButton || actionButton.disabled) return;
     const action = actionButton.dataset.action;
-    if (action === "memory-filter") {
+    if (action === "toggle-voice-note") {
+      if (state.voiceRecording) stopVoiceNoteRecording(false);
+      else void startVoiceNoteRecording();
+    } else if (action === "load-voice-note") {
+      const voiceEvent = state.events.find((savedEvent) => savedEvent.id === actionButton.dataset.eventId);
+      if (!voiceEvent) { showToast("This voice note is no longer in the chat."); return; }
+      actionButton.disabled = true;
+      actionButton.classList.add("is-loading");
+      const label = $("span:nth-child(2)", actionButton);
+      if (label) label.innerHTML = "Opening your little hello…<small>Decrypting on this device</small>";
+      try {
+        await loadVoiceNote(voiceEvent);
+        renderCurrentView();
+        showToast("Your voice note is ready to play. ♡");
+      } catch (error) {
+        showToast(error?.message || "This voice note could not be opened.");
+        if (actionButton.isConnected) {
+          actionButton.disabled = false;
+          actionButton.classList.remove("is-loading");
+          if (label) label.innerHTML = `Listen to a voice note <small>${formatVoiceDuration(voiceEvent.payload.durationMs)} · tap to load</small>`;
+        }
+      }
+    } else if (action === "memory-filter") {
       state.memoryFilter = actionButton.dataset.filter === "photos" ? "photos" : "all";
       state.memoryPage = 0;
       renderMemories();
@@ -1271,6 +1497,8 @@
   });
 
   $("#leave-button").addEventListener("click", () => {
+    stopVoiceNoteRecording(true);
+    clearVoiceNoteCache();
     if (state.activeCall) closeCall(true, "You left your shared space.");
     if (state.incomingCall) state.socket?.emit("call-response", { to: state.incomingCall.from, callId: state.incomingCall.callId, accepted: false });
     state.incomingCall = null;
@@ -1300,6 +1528,17 @@
   });
 
   $("#call-button").addEventListener("click", startCallRequest);
+  $("#send-love-button").addEventListener("click", (event) => {
+    const now = Date.now();
+    if (now - state.lastLoveSparkAt < 900) return;
+    if (!state.socket?.connected) { showToast("Your room is reconnecting. Try again in a moment."); return; }
+    state.lastLoveSparkAt = now;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    spawnLoveBurst(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2);
+    void postEvent({ type: "love-spark", sentAt: now });
+  });
+  $("#voice-note-finish").addEventListener("click", () => stopVoiceNoteRecording(false));
+  $("#voice-note-discard").addEventListener("click", () => stopVoiceNoteRecording(true));
   $("#lightbox-close").addEventListener("click", hideMemoryPhoto);
   photoLightbox.addEventListener("click", (event) => { if (event.target === photoLightbox) hideMemoryPhoto(); });
   window.addEventListener("keydown", (event) => { if (event.key === "Escape" && !photoLightbox.hidden) hideMemoryPhoto(); });
@@ -1318,6 +1557,26 @@
   });
   $("#call-accept").addEventListener("click", acceptIncomingCall);
   $("#call-hangup").addEventListener("click", () => closeCall(true));
+
+  function spawnLoveBurst(x, y) {
+    if (!loveEffectsLayer) return;
+    const glyphs = ["♥", "♡", "✦", "♥", "♡", "✧", "♥", "♡", "✦", "♥"];
+    glyphs.forEach((glyph, index) => {
+      const heart = document.createElement("span");
+      const angle = ((Math.PI * 2) / glyphs.length) * index + (Math.random() - .5) * .35;
+      const distance = 58 + Math.random() * 72;
+      heart.className = "love-burst-heart";
+      heart.textContent = glyph;
+      heart.style.left = `${Math.max(16, Math.min(window.innerWidth - 16, x))}px`;
+      heart.style.top = `${Math.max(24, Math.min(window.innerHeight - 24, y))}px`;
+      heart.style.setProperty("--burst-x", `${Math.cos(angle) * distance}px`);
+      heart.style.setProperty("--burst-y", `${Math.sin(angle) * distance - 30}px`);
+      heart.style.setProperty("--burst-turn", `${Math.round(Math.random() * 70 - 35)}deg`);
+      heart.style.setProperty("--burst-delay", `${index * 22}ms`);
+      loveEffectsLayer.append(heart);
+      window.setTimeout(() => heart.remove(), 1_900);
+    });
+  }
 
   async function startCallRequest() {
     const partner = partnerMembers()[0];

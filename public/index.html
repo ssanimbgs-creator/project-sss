@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#fbf5ee">
+    <meta name="theme-color" content="#120b16">
     <meta name="description" content="A little shared space for you and your favorite person.">
     <title>LoveNest — a little closer</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -16,6 +16,8 @@
   <body>
     <div class="ambient ambient-one" aria-hidden="true"></div>
     <div class="ambient ambient-two" aria-hidden="true"></div>
+    <div id="love-particles" class="love-particles" aria-hidden="true"></div>
+    <div id="love-bursts" class="love-burst-layer" aria-hidden="true"></div>
 
     <main id="login-screen" class="login-shell">
       <section class="welcome-copy">
@@ -98,6 +100,7 @@
           <div class="crumb"><span>YOUR SHARED SPACE</span><span class="crumb-slash">/</span><strong id="crumb-title">Our space</strong></div>
           <div class="topbar-right">
             <div class="secure-chip"><span>✦</span> Just the two of you</div>
+            <button id="send-love-button" class="love-button" type="button" aria-label="Send a little love"><span aria-hidden="true">♥</span><span class="love-button-label">Send a little love</span></button>
             <button id="call-button" class="call-button" type="button" aria-label="Start a voice call"><span>♬</span><span class="call-button-label">Call your person</span></button>
           </div>
         </header>
@@ -120,6 +123,13 @@
         <audio id="remote-audio" autoplay></audio>
         <div id="call-note" class="call-note" hidden></div>
       </div>
+    </div>
+
+    <div id="voice-recorder-dock" class="voice-recorder-dock" role="status" aria-live="polite" hidden>
+      <span class="recording-live-dot" aria-hidden="true"></span>
+      <div class="voice-recorder-copy"><strong>A little hello is recording</strong><span id="voice-recorder-timer">00:00 / 00:20</span></div>
+      <button id="voice-note-finish" class="voice-dock-send" type="button">Finish &amp; send</button>
+      <button id="voice-note-discard" class="voice-dock-discard" type="button" aria-label="Discard voice note">×</button>
     </div>
 
     <div id="photo-lightbox" class="photo-lightbox" role="dialog" aria-modal="true" aria-label="Shared memory photo" hidden>
